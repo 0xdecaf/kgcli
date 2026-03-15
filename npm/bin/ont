@@ -1,0 +1,8 @@
+#!/usr/bin/env node
+
+console.error(
+  "ont binary not found. The postinstall script may not have run.\n" +
+    "Try: npm rebuild ont-cli\n" +
+    "Or install manually: https://github.com/0xdecaf/ont-cli/releases"
+);
+process.exit(1);

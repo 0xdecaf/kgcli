@@ -1,0 +1,38 @@
+{
+  "name": "ont-cli",
+  "version": "0.1.0",
+  "description": "Graph database CLI for OSINT investigations (Rust)",
+  "bin": {
+    "ont": "bin/ont"
+  },
+  "scripts": {
+    "postinstall": "node install.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/0xdecaf/ont-cli.git"
+  },
+  "publishConfig": {
+    "provenance": true
+  },
+  "keywords": [
+    "osint",
+    "graph",
+    "cli",
+    "investigation",
+    "triples",
+    "knowledge-graph"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=14"
+  },
+  "os": [
+    "darwin",
+    "linux"
+  ],
+  "cpu": [
+    "x64",
+    "arm64"
+  ]
+}
