@@ -9,7 +9,7 @@ use clap::{Parser, Subcommand};
 use db::{Database, resolve_db_path};
 
 #[derive(Parser)]
-#[command(name = "ont", about = "Graph database CLI for OSINT investigations")]
+#[command(name = "kg", about = "Graph database CLI for OSINT investigations")]
 struct Cli {
     /// Named graph or path to database file
     #[arg(long, global = true)]

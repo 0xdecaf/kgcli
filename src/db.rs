@@ -48,15 +48,15 @@ END;
 
 /// Resolve the database path from the --graph flag.
 ///
-/// - None → `.ont/graph.db` in cwd
-/// - Some(name) with no path separators → `.ont/<name>.db` in cwd
+/// - None → `.kg/graph.db` in cwd
+/// - Some(name) with no path separators → `.kg/<name>.db` in cwd
 /// - Some(path) with path separators or absolute → use as-is
 pub fn resolve_db_path(graph: Option<&str>) -> Result<PathBuf> {
     match graph {
         None => {
-            let dir = Path::new(".ont");
+            let dir = Path::new(".kg");
             std::fs::create_dir_all(dir)
-                .context("failed to create .ont directory")?;
+                .context("failed to create .kg directory")?;
             Ok(dir.join("graph.db"))
         }
         Some(name) => {
@@ -70,10 +70,10 @@ pub fn resolve_db_path(graph: Option<&str>) -> Result<PathBuf> {
                 }
                 Ok(path.to_path_buf())
             } else {
-                // Named graph — use .ont/<name>.db
-                let dir = Path::new(".ont");
+                // Named graph — use .kg/<name>.db
+                let dir = Path::new(".kg");
                 std::fs::create_dir_all(dir)
-                    .context("failed to create .ont directory")?;
+                    .context("failed to create .kg directory")?;
                 Ok(dir.join(format!("{name}.db")))
             }
         }

@@ -267,6 +267,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92ecc6618181def0457392ccd0ee51198e065e016d1d527a7ac1b6dc7c1f09d2"
 
 [[package]]
+name = "kgcli"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "clap",
+ "rusqlite",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "leb128fmt"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -318,18 +330,6 @@ name = "once_cell_polyfill"
 version = "1.70.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "384b8ab6d37215f3c5301a95a4accb5d64aa607f1fcb26a11b5303878451b4fe"
-
-[[package]]
-name = "ont-cli"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "clap",
- "rusqlite",
- "serde",
- "serde_json",
- "tempfile",
-]
 
 [[package]]
 name = "pkg-config"

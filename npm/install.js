@@ -7,8 +7,8 @@ const fs = require("fs");
 const path = require("path");
 const { execSync } = require("child_process");
 
-const REPO = "0xdecaf/ont-cli";
-const BINARY_NAME = "ont";
+const REPO = "0xdecaf/kgcli";
+const BINARY_NAME = "kg";
 
 const PLATFORM_MAP = {
   "darwin-x64": "x86_64-apple-darwin",
@@ -61,14 +61,14 @@ function download(url) {
 async function install() {
   const target = getTarget();
   const version = getVersion();
-  const tarball = `ont-cli-${target}.tar.gz`;
+  const tarball = `kgcli-${target}.tar.gz`;
   const url = `https://github.com/${REPO}/releases/download/v${version}/${tarball}`;
 
   const binDir = path.join(__dirname, "bin");
   const binPath = path.join(binDir, BINARY_NAME);
   const tmpTarball = path.join(__dirname, tarball);
 
-  console.log(`Downloading ont v${version} for ${target}...`);
+  console.log(`Downloading kg v${version} for ${target}...`);
 
   try {
     const data = await download(url);
@@ -88,9 +88,9 @@ async function install() {
     // Clean up tarball
     fs.unlinkSync(tmpTarball);
 
-    console.log(`Installed ont to ${binPath}`);
+    console.log(`Installed kg to ${binPath}`);
   } catch (err) {
-    console.error(`Failed to install ont: ${err.message}`);
+    console.error(`Failed to install kg: ${err.message}`);
     console.error(
       `\nYou can manually download from:\n  https://github.com/${REPO}/releases/tag/v${version}`
     );

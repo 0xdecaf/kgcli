@@ -9,7 +9,7 @@ permissions:
 
 env:
   CARGO_TERM_COLOR: always
-  BINARY_NAME: ont
+  BINARY_NAME: kg
 
 jobs:
   build:
@@ -57,12 +57,12 @@ jobs:
         shell: bash
         run: |
           cd target/${{ matrix.target }}/release
-          tar czf ../../../ont-cli-${{ matrix.target }}.tar.gz ${{ env.BINARY_NAME }}
+          tar czf ../../../kgcli-${{ matrix.target }}.tar.gz ${{ env.BINARY_NAME }}
 
       - uses: actions/upload-artifact@v4
         with:
-          name: ont-cli-${{ matrix.target }}
-          path: ont-cli-${{ matrix.target }}.tar.gz
+          name: kgcli-${{ matrix.target }}
+          path: kgcli-${{ matrix.target }}.tar.gz
 
   release:
     name: Create Release
@@ -77,7 +77,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          sha256sum ont-cli-*.tar.gz > sha256sums.txt
+          sha256sum kgcli-*.tar.gz > sha256sums.txt
           cat sha256sums.txt
 
       - name: Create GitHub Release
@@ -85,7 +85,7 @@ jobs:
         with:
           generate_release_notes: true
           files: |
-            artifacts/ont-cli-*.tar.gz
+            artifacts/kgcli-*.tar.gz
             artifacts/sha256sums.txt
 
   npm-publish:
@@ -115,7 +115,9 @@ jobs:
             pkg.version = '${VERSION}';
             require('fs').writeFileSync('package.json', JSON.stringify(pkg, null, 2) + '\n');
           "
-          echo "Publishing ont-cli@${VERSION}"
+          echo "Publishing kgcli@${VERSION}"
 
       - name: Publish to npm
         run: cd npm && npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}

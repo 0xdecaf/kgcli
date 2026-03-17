@@ -1,16 +1,16 @@
 {
-  "name": "ont-cli",
+  "name": "kgcli",
   "version": "0.1.0",
   "description": "Graph database CLI for OSINT investigations (Rust)",
   "bin": {
-    "ont": "bin/ont"
+    "kg": "bin/kg"
   },
   "scripts": {
     "postinstall": "node install.js"
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/0xdecaf/ont-cli.git"
+    "url": "git+https://github.com/0xdecaf/kgcli.git"
   },
   "publishConfig": {
     "provenance": true

@@ -1,0 +1,8 @@
+#!/usr/bin/env node
+
+console.error(
+  "kg binary not found. The postinstall script may not have run.\n" +
+    "Try: npm rebuild kgcli\n" +
+    "Or install manually: https://github.com/0xdecaf/kgcli/releases"
+);
+process.exit(1);
