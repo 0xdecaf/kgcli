@@ -139,10 +139,30 @@ enum Command {
     },
 }
 
+impl Command {
+    fn is_read_only(&self) -> bool {
+        matches!(
+            self,
+            Command::Get { .. }
+                | Command::Search { .. }
+                | Command::Query { .. }
+                | Command::Types
+                | Command::Schema { .. }
+                | Command::Neighbors { .. }
+                | Command::Path { .. }
+        )
+    }
+}
+
 fn main() -> Result<()> {
     let cli = Cli::parse();
-    let db_path = resolve_db_path(cli.graph.as_deref())?;
-    let db = Database::open(&db_path)?;
+    let read_only = cli.command.is_read_only();
+    let db_path = resolve_db_path(cli.graph.as_deref(), !read_only)?;
+    let db = if read_only {
+        Database::open_read_only(&db_path)?
+    } else {
+        Database::open(&db_path)?
+    };
     let opts = jsonld::OutputOpts {
         provenance: cli.provenance,
     };

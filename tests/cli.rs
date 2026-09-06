@@ -113,3 +113,34 @@ fn neighbors_rejects_unknown_direction() {
         .failure()
         .stderr(predicate::str::contains("possible values"));
 }
+
+#[test]
+fn read_commands_do_not_create_a_database() {
+    let dir = tempfile::tempdir().unwrap();
+    kg(dir.path())
+        .args(["types"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no graph database found"));
+    assert!(
+        !dir.path().join(".kg").exists(),
+        ".kg directory must not be created by a read command"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn new_database_is_private_to_the_user() {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = tempfile::tempdir().unwrap();
+    kg(dir.path())
+        .args(["set", "urn:person:alice-example", "urn:prop:age", "35"])
+        .assert()
+        .success();
+    let mode = std::fs::metadata(dir.path().join(".kg/graph.db"))
+        .unwrap()
+        .permissions()
+        .mode()
+        & 0o777;
+    assert_eq!(mode, 0o600, "mode was {mode:o}");
+}

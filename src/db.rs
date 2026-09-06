@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS triples (
     is_link     BOOLEAN NOT NULL DEFAULT 0,
     source      TEXT,
     confidence  REAL,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_subject ON triples(subject);
@@ -51,11 +51,13 @@ END;
 /// - None → `.kg/graph.db` in cwd
 /// - Some(name) with no path separators → `.kg/<name>.db` in cwd
 /// - Some(path) with path separators or absolute → use as-is
-pub fn resolve_db_path(graph: Option<&str>) -> Result<PathBuf> {
+pub fn resolve_db_path(graph: Option<&str>, create_dirs: bool) -> Result<PathBuf> {
     match graph {
         None => {
             let dir = Path::new(".kg");
-            std::fs::create_dir_all(dir).context("failed to create .kg directory")?;
+            if create_dirs {
+                std::fs::create_dir_all(dir).context("failed to create .kg directory")?;
+            }
             Ok(dir.join("graph.db"))
         }
         Some(name) => {
@@ -71,7 +73,9 @@ pub fn resolve_db_path(graph: Option<&str>) -> Result<PathBuf> {
             } else {
                 // Named graph — use .kg/<name>.db
                 let dir = Path::new(".kg");
-                std::fs::create_dir_all(dir).context("failed to create .kg directory")?;
+                if create_dirs {
+                    std::fs::create_dir_all(dir).context("failed to create .kg directory")?;
+                }
                 Ok(dir.join(format!("{name}.db")))
             }
         }
@@ -93,9 +97,35 @@ pub struct Database {
 }
 
 impl Database {
+    /// Open (creating if needed) a read-write database.
     pub fn open(path: &Path) -> Result<Self> {
+        let existed = path.exists();
         let conn = Connection::open(path)
             .with_context(|| format!("failed to open database: {}", path.display()))?;
+        if !existed {
+            restrict_permissions(path)?;
+        }
+        Self::init(conn)
+    }
+
+    /// Open an existing database read-only. Errors if it does not exist.
+    pub fn open_read_only(path: &Path) -> Result<Self> {
+        if !path.exists() {
+            bail!(
+                "no graph database found at {}; run a write command (create, set, link) first",
+                path.display()
+            );
+        }
+        let flags =
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let conn = Connection::open_with_flags(path, flags)
+            .with_context(|| format!("failed to open database: {}", path.display()))?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        Ok(Self { conn })
+    }
+
+    fn init(conn: Connection) -> Result<Self> {
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
             .context("failed to set pragmas")?;
         conn.execute_batch(SCHEMA_SQL)
@@ -403,6 +433,18 @@ impl Database {
         })?;
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
+}
+
+#[cfg(unix)]
+fn restrict_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("failed to set permissions on {}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn restrict_permissions(_path: &Path) -> Result<()> {
+    Ok(())
 }
 
 #[cfg(test)]
@@ -788,13 +830,17 @@ mod tests {
     }
 
     #[test]
-    fn resolve_default_path() {
+    fn resolve_named_graph_without_creating_dirs() {
+        let path = resolve_db_path(Some("case1"), false).unwrap();
+        assert_eq!(path, Path::new(".kg").join("case1.db"));
+    }
+
+    #[test]
+    fn resolve_explicit_path_is_used_as_is() {
         let dir = tempfile::tempdir().unwrap();
-        let _guard = std::env::set_current_dir(dir.path());
-        // We can't easily test resolve_db_path without changing cwd
-        // so just test the logic paths directly
-        let path = resolve_db_path(None).unwrap();
-        assert!(path.to_str().unwrap().contains("graph.db"));
+        let p = dir.path().join("x.db");
+        let path = resolve_db_path(Some(p.to_str().unwrap()), false).unwrap();
+        assert_eq!(path, p);
     }
 
     #[test]
@@ -901,6 +947,21 @@ mod tests {
         assert_eq!(fts_quote("alice example.com"), "\"alice\" \"example.com\"");
         assert_eq!(fts_quote("say \"hi\""), "\"say\" \"\"\"hi\"\"\"");
         assert_eq!(fts_quote("   "), "");
+    }
+
+    #[test]
+    fn created_at_is_rfc3339_utc() {
+        let db = test_db();
+        db.insert_triple("urn:person:alice", "urn:prop:age", "35", false, None, None)
+            .unwrap();
+        let t = &db.get_triples_by_subject("urn:person:alice").unwrap()[0];
+        assert!(t.created_at.ends_with('Z'), "got {}", t.created_at);
+        assert_eq!(
+            t.created_at.len(),
+            "2026-09-06T12:00:00.000Z".len(),
+            "got {}",
+            t.created_at
+        );
     }
 
     #[test]
