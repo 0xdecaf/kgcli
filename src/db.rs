@@ -297,45 +297,81 @@ impl Database {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
-    /// Merge source entity into target: re-point all triples from source to target.
-    /// Returns the number of triples moved.
+    /// Merge `source` into `target` atomically: re-point every outbound and
+    /// inbound triple, skip anything that would become a self-loop, then delete
+    /// `source`. Returns the number of triples moved.
     pub fn merge_entity(&self, source: &str, target: &str) -> Result<usize> {
-        let triples = self.get_triples_by_subject(source)?;
+        let tx = self.conn.unchecked_transaction()?;
+        let outbound = self.get_triples_by_subject(source)?;
+        let inbound = self.find_inbound_links(source)?;
         let mut moved = 0;
-        for t in &triples {
-            let inserted = self.insert_triple(
+
+        for t in &outbound {
+            if t.is_link && t.object == target {
+                continue; // source -> target becomes target -> target
+            }
+            if self.insert_triple(
                 target,
                 &t.predicate,
                 &t.object,
                 t.is_link,
                 t.source.as_deref(),
                 t.confidence,
-            )?;
-            if inserted {
+            )? {
                 moved += 1;
             }
         }
-        // Also re-point inbound links from source to target
-        let inbound = self.find_inbound_links(source)?;
         for t in &inbound {
-            let inserted = self.insert_triple(
+            if t.subject == target {
+                continue; // target -> source becomes target -> target
+            }
+            if self.insert_triple(
                 &t.subject,
                 &t.predicate,
                 target,
                 true,
                 t.source.as_deref(),
                 t.confidence,
-            )?;
-            if inserted {
+            )? {
                 moved += 1;
             }
         }
-        // Delete old source entity and its inbound references
         self.delete_entity(source)?;
         for t in &inbound {
             self.delete_triple(&t.subject, &t.predicate, source)?;
         }
+        tx.commit()?;
         Ok(moved)
+    }
+
+    /// Replace the literal triple (subject, predicate, value) with a link to
+    /// `target`, keeping the literal's source and confidence. Atomic.
+    pub fn promote_literal(
+        &self,
+        subject: &str,
+        predicate: &str,
+        value: &str,
+        target: &str,
+    ) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let literal = self
+            .get_triples_by_subject_predicate(subject, predicate)?
+            .into_iter()
+            .find(|t| !t.is_link && t.object == value)
+            .ok_or_else(|| {
+                anyhow::anyhow!("literal triple not found: {subject} {predicate} {value}")
+            })?;
+        self.delete_triple(subject, predicate, value)?;
+        self.insert_triple(
+            subject,
+            predicate,
+            target,
+            true,
+            literal.source.as_deref(),
+            literal.confidence,
+        )?;
+        tx.commit()?;
+        Ok(())
     }
 
     /// Show predicates used for a given entity type with counts.
@@ -745,5 +781,103 @@ mod tests {
         // so just test the logic paths directly
         let path = resolve_db_path(None).unwrap();
         assert!(path.to_str().unwrap().contains("graph.db"));
+    }
+
+    #[test]
+    fn merge_skips_self_loops() {
+        let db = test_db();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:rel:knows",
+            "urn:person:bob",
+            true,
+            None,
+            None,
+        )
+        .unwrap();
+        db.insert_triple(
+            "urn:person:bob",
+            "urn:rel:knows",
+            "urn:person:alice",
+            true,
+            None,
+            None,
+        )
+        .unwrap();
+        db.merge_entity("urn:person:alice", "urn:person:bob")
+            .unwrap();
+        let links = db.get_outbound_links("urn:person:bob").unwrap();
+        assert!(
+            links.iter().all(|t| t.object != "urn:person:bob"),
+            "self-loop created: {links:?}"
+        );
+        assert!(!db.entity_exists("urn:person:alice").unwrap());
+    }
+
+    #[test]
+    fn merge_preserves_provenance() {
+        let db = test_db();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:prop:age",
+            "35",
+            false,
+            Some("records"),
+            Some(0.7),
+        )
+        .unwrap();
+        db.merge_entity("urn:person:alice", "urn:person:bob")
+            .unwrap();
+        let t = &db
+            .get_triples_by_subject_predicate("urn:person:bob", "urn:prop:age")
+            .unwrap()[0];
+        assert_eq!(t.source.as_deref(), Some("records"));
+        assert_eq!(t.confidence, Some(0.7));
+    }
+
+    #[test]
+    fn promote_keeps_provenance_and_removes_literal() {
+        let db = test_db();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:prop:employer",
+            "Acme",
+            false,
+            Some("linkedin"),
+            Some(0.6),
+        )
+        .unwrap();
+        db.promote_literal(
+            "urn:person:alice",
+            "urn:prop:employer",
+            "Acme",
+            "urn:org:acme",
+        )
+        .unwrap();
+        let ts = db
+            .get_triples_by_subject_predicate("urn:person:alice", "urn:prop:employer")
+            .unwrap();
+        assert_eq!(ts.len(), 1);
+        assert!(ts[0].is_link);
+        assert_eq!(ts[0].object, "urn:org:acme");
+        assert_eq!(ts[0].source.as_deref(), Some("linkedin"));
+        assert_eq!(ts[0].confidence, Some(0.6));
+    }
+
+    #[test]
+    fn promote_missing_literal_is_an_error_and_changes_nothing() {
+        let db = test_db();
+        let err = db.promote_literal(
+            "urn:person:alice",
+            "urn:prop:employer",
+            "Acme",
+            "urn:org:acme",
+        );
+        assert!(err.is_err());
+        assert!(
+            db.get_triples_by_subject("urn:person:alice")
+                .unwrap()
+                .is_empty()
+        );
     }
 }
