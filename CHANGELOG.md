@@ -11,7 +11,8 @@
 ### Changed
 - `create` now requires at least one property.
 - Read commands open the database read-only and no longer create `.kg/`.
-- `created_at` is RFC 3339 UTC with a `Z` suffix.
+- `created_at` is RFC 3339 UTC with a `Z` suffix for every newly written row,
+  including in databases created by earlier versions.
 - New database files are created with mode 0600.
 - `merge` and `promote` are atomic; `merge` no longer creates self-loops;
   `promote` keeps the literal's provenance.

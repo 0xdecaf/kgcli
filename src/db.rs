@@ -144,8 +144,8 @@ impl Database {
         confidence: Option<f64>,
     ) -> Result<bool> {
         let result = self.conn.execute(
-            "INSERT OR IGNORE INTO triples (subject, predicate, object, is_link, source, confidence)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT OR IGNORE INTO triples (subject, predicate, object, is_link, source, confidence, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
             params![subject, predicate, object, is_link, source, confidence],
         )?;
         Ok(result > 0)
@@ -1097,5 +1097,29 @@ mod tests {
         assert_eq!(ts.len(), 1, "expected exactly one triple: {ts:?}");
         assert!(ts[0].is_link);
         assert_eq!(ts[0].object, "urn:org:acme");
+    }
+
+    #[test]
+    fn insert_writes_rfc3339_even_when_table_default_is_old() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE triples (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject     TEXT NOT NULL,
+                predicate   TEXT NOT NULL,
+                object      TEXT NOT NULL,
+                is_link     BOOLEAN NOT NULL DEFAULT 0,
+                source      TEXT,
+                confidence  REAL,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            );",
+        )
+        .unwrap();
+        let db = Database { conn };
+        db.insert_triple("urn:person:alice", "urn:prop:age", "35", false, None, None)
+            .unwrap();
+        let t = &db.get_triples_by_subject("urn:person:alice").unwrap()[0];
+        assert!(t.created_at.ends_with('Z'), "got {}", t.created_at);
+        assert_eq!(t.created_at.len(), "2026-09-06T12:00:00.000Z".len());
     }
 }
