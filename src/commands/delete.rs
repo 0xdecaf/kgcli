@@ -1,7 +1,7 @@
 use anyhow::Result;
 
 use crate::db::Database;
-use crate::jsonld::{entity_to_jsonld, predicate_to_jsonld};
+use crate::jsonld::{OutputOpts, entity_to_jsonld, predicate_to_jsonld};
 use crate::model::Urn;
 
 pub fn run(
@@ -9,6 +9,7 @@ pub fn run(
     subject: &str,
     predicate: Option<&str>,
     value: Option<&str>,
+    opts: OutputOpts,
 ) -> Result<()> {
     Urn::parse(subject)?;
 
@@ -37,14 +38,14 @@ pub fn run(
             Urn::parse(pred)?;
             db.delete_predicate(subject, pred)?;
             let remaining = db.get_triples_by_subject(subject)?;
-            let json = entity_to_jsonld(subject, &remaining);
+            let json = entity_to_jsonld(subject, &remaining, opts);
             println!("{}", serde_json::to_string_pretty(&json)?);
         }
         (Some(pred), Some(val)) => {
             Urn::parse(pred)?;
             db.delete_triple(subject, pred, val)?;
             let remaining = db.get_triples_by_subject_predicate(subject, pred)?;
-            let json = predicate_to_jsonld(subject, pred, &remaining);
+            let json = predicate_to_jsonld(subject, pred, &remaining, opts);
             println!("{}", serde_json::to_string_pretty(&json)?);
         }
     }

@@ -1,10 +1,16 @@
 use anyhow::Result;
 
 use crate::db::Database;
-use crate::jsonld::predicate_to_jsonld;
+use crate::jsonld::{OutputOpts, predicate_to_jsonld};
 use crate::model::Urn;
 
-pub fn run(db: &Database, subject: &str, predicate: &str, target: &str) -> Result<()> {
+pub fn run(
+    db: &Database,
+    subject: &str,
+    predicate: &str,
+    target: &str,
+    opts: OutputOpts,
+) -> Result<()> {
     Urn::parse(subject)?;
     Urn::parse(predicate)?;
     Urn::parse(target)?;
@@ -14,7 +20,7 @@ pub fn run(db: &Database, subject: &str, predicate: &str, target: &str) -> Resul
 
     // Return remaining link targets
     let triples = db.get_triples_by_subject_predicate(subject, predicate)?;
-    let json = predicate_to_jsonld(subject, predicate, &triples);
+    let json = predicate_to_jsonld(subject, predicate, &triples, opts);
     println!("{}", serde_json::to_string_pretty(&json)?);
     Ok(())
 }

@@ -1,7 +1,7 @@
 use anyhow::{Result, bail};
 
 use crate::db::Database;
-use crate::jsonld::predicate_to_jsonld;
+use crate::jsonld::{OutputOpts, predicate_to_jsonld};
 use crate::model::Urn;
 
 pub fn run(
@@ -11,6 +11,7 @@ pub fn run(
     value: &str,
     source: Option<&str>,
     confidence: Option<f64>,
+    opts: OutputOpts,
 ) -> Result<()> {
     Urn::parse(subject)?;
     Urn::parse(predicate)?;
@@ -23,7 +24,7 @@ pub fn run(
 
     // Return all values of this predicate on the entity
     let triples = db.get_triples_by_subject_predicate(subject, predicate)?;
-    let json = predicate_to_jsonld(subject, predicate, &triples);
+    let json = predicate_to_jsonld(subject, predicate, &triples, opts);
     println!("{}", serde_json::to_string_pretty(&json)?);
     Ok(())
 }

@@ -13,7 +13,7 @@ CREATE TABLE IF NOT EXISTS triples (
     is_link     BOOLEAN NOT NULL DEFAULT 0,
     source      TEXT,
     confidence  REAL,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    created_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 
 CREATE INDEX IF NOT EXISTS idx_subject ON triples(subject);
@@ -51,12 +51,13 @@ END;
 /// - None → `.kg/graph.db` in cwd
 /// - Some(name) with no path separators → `.kg/<name>.db` in cwd
 /// - Some(path) with path separators or absolute → use as-is
-pub fn resolve_db_path(graph: Option<&str>) -> Result<PathBuf> {
+pub fn resolve_db_path(graph: Option<&str>, create_dirs: bool) -> Result<PathBuf> {
     match graph {
         None => {
             let dir = Path::new(".kg");
-            std::fs::create_dir_all(dir)
-                .context("failed to create .kg directory")?;
+            if create_dirs {
+                std::fs::create_dir_all(dir).context("failed to create .kg directory")?;
+            }
             Ok(dir.join("graph.db"))
         }
         Some(name) => {
@@ -72,12 +73,23 @@ pub fn resolve_db_path(graph: Option<&str>) -> Result<PathBuf> {
             } else {
                 // Named graph — use .kg/<name>.db
                 let dir = Path::new(".kg");
-                std::fs::create_dir_all(dir)
-                    .context("failed to create .kg directory")?;
+                if create_dirs {
+                    std::fs::create_dir_all(dir).context("failed to create .kg directory")?;
+                }
                 Ok(dir.join(format!("{name}.db")))
             }
         }
     }
+}
+
+/// Quote a free-text query for FTS5 so user input is matched literally
+/// per whitespace-separated token instead of being parsed as FTS syntax.
+pub fn fts_quote(query: &str) -> String {
+    query
+        .split_whitespace()
+        .map(|tok| format!("\"{}\"", tok.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 pub struct Database {
@@ -85,9 +97,35 @@ pub struct Database {
 }
 
 impl Database {
+    /// Open (creating if needed) a read-write database.
     pub fn open(path: &Path) -> Result<Self> {
+        let existed = path.exists();
         let conn = Connection::open(path)
             .with_context(|| format!("failed to open database: {}", path.display()))?;
+        if !existed {
+            restrict_permissions(path)?;
+        }
+        Self::init(conn)
+    }
+
+    /// Open an existing database read-only. Errors if it does not exist.
+    pub fn open_read_only(path: &Path) -> Result<Self> {
+        if !path.exists() {
+            bail!(
+                "no graph database found at {}; run a write command (create, set, link) first",
+                path.display()
+            );
+        }
+        let flags =
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX;
+        let conn = Connection::open_with_flags(path, flags)
+            .with_context(|| format!("failed to open database: {}", path.display()))?;
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
+        Ok(Self { conn })
+    }
+
+    fn init(conn: Connection) -> Result<Self> {
+        conn.busy_timeout(std::time::Duration::from_secs(5))?;
         conn.execute_batch("PRAGMA journal_mode=WAL; PRAGMA foreign_keys=ON;")
             .context("failed to set pragmas")?;
         conn.execute_batch(SCHEMA_SQL)
@@ -106,8 +144,8 @@ impl Database {
         confidence: Option<f64>,
     ) -> Result<bool> {
         let result = self.conn.execute(
-            "INSERT OR IGNORE INTO triples (subject, predicate, object, is_link, source, confidence)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            "INSERT OR IGNORE INTO triples (subject, predicate, object, is_link, source, confidence, created_at)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))",
             params![subject, predicate, object, is_link, source, confidence],
         )?;
         Ok(result > 0)
@@ -171,10 +209,9 @@ impl Database {
 
     /// Delete all triples for a subject. Returns count of deleted rows.
     pub fn delete_entity(&self, subject: &str) -> Result<usize> {
-        let count = self.conn.execute(
-            "DELETE FROM triples WHERE subject = ?1",
-            params![subject],
-        )?;
+        let count = self
+            .conn
+            .execute("DELETE FROM triples WHERE subject = ?1", params![subject])?;
         Ok(count)
     }
 
@@ -219,6 +256,10 @@ impl Database {
 
     /// Full-text search across all triple fields.
     pub fn fts_search(&self, query: &str) -> Result<Vec<Triple>> {
+        let quoted = fts_quote(query);
+        if quoted.is_empty() {
+            return Ok(Vec::new());
+        }
         let mut stmt = self.conn.prepare(
             "SELECT t.id, t.subject, t.predicate, t.object, t.is_link, t.source, t.confidence, t.created_at
              FROM triples_fts f
@@ -226,7 +267,7 @@ impl Database {
              WHERE triples_fts MATCH ?1
              ORDER BY rank",
         )?;
-        let rows = stmt.query_map(params![query], |row| {
+        let rows = stmt.query_map(params![quoted], |row| {
             Ok(Triple {
                 id: row.get(0)?,
                 subject: row.get(1)?,
@@ -242,11 +283,7 @@ impl Database {
     }
 
     /// Find entities by predicate and optional value match.
-    pub fn query_by_predicate(
-        &self,
-        predicate: &str,
-        value: Option<&str>,
-    ) -> Result<Vec<String>> {
+    pub fn query_by_predicate(&self, predicate: &str, value: Option<&str>) -> Result<Vec<String>> {
         match value {
             Some(val) => {
                 let mut stmt = self.conn.prepare(
@@ -256,9 +293,9 @@ impl Database {
                 rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
             }
             None => {
-                let mut stmt = self.conn.prepare(
-                    "SELECT DISTINCT subject FROM triples WHERE predicate = ?1",
-                )?;
+                let mut stmt = self
+                    .conn
+                    .prepare("SELECT DISTINCT subject FROM triples WHERE predicate = ?1")?;
                 let rows = stmt.query_map(params![predicate], |row| row.get(0))?;
                 rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
             }
@@ -304,45 +341,97 @@ impl Database {
         rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
-    /// Merge source entity into target: re-point all triples from source to target.
-    /// Returns the number of triples moved.
+    /// Merge `source` into `target` atomically: re-point every outbound and
+    /// inbound triple, skip anything that would become a self-loop, then delete
+    /// `source`. Returns the number of triples moved.
     pub fn merge_entity(&self, source: &str, target: &str) -> Result<usize> {
-        let triples = self.get_triples_by_subject(source)?;
+        let tx = self.conn.unchecked_transaction()?;
+        let outbound = self.get_triples_by_subject(source)?;
+        let inbound = self.find_inbound_links(source)?;
         let mut moved = 0;
-        for t in &triples {
-            let inserted = self.insert_triple(
+
+        for t in &outbound {
+            let object: &str = if t.is_link && t.object == source {
+                target
+            } else {
+                &t.object
+            };
+            if t.is_link && object == target {
+                continue; // would become target -> target
+            }
+            if self.insert_triple(
                 target,
                 &t.predicate,
-                &t.object,
+                object,
                 t.is_link,
                 t.source.as_deref(),
                 t.confidence,
-            )?;
-            if inserted {
+            )? {
                 moved += 1;
             }
         }
-        // Also re-point inbound links from source to target
-        let inbound = self.find_inbound_links(source)?;
         for t in &inbound {
-            let inserted = self.insert_triple(
+            if t.subject == target {
+                continue; // target -> source becomes target -> target
+            }
+            if t.subject == source {
+                continue; // source's self-loop was already handled in the outbound pass
+            }
+            if self.insert_triple(
                 &t.subject,
                 &t.predicate,
                 target,
                 true,
                 t.source.as_deref(),
                 t.confidence,
-            )?;
-            if inserted {
+            )? {
                 moved += 1;
             }
         }
-        // Delete old source entity and its inbound references
         self.delete_entity(source)?;
         for t in &inbound {
             self.delete_triple(&t.subject, &t.predicate, source)?;
         }
+        tx.commit()?;
         Ok(moved)
+    }
+
+    /// Replace the literal triple (subject, predicate, value) with a link to
+    /// `target`, keeping the literal's source and confidence. Atomic. If a
+    /// triple with the target object already exists, it is marked as a link
+    /// and its own provenance is kept.
+    pub fn promote_literal(
+        &self,
+        subject: &str,
+        predicate: &str,
+        value: &str,
+        target: &str,
+    ) -> Result<()> {
+        let tx = self.conn.unchecked_transaction()?;
+        let literal = self
+            .get_triples_by_subject_predicate(subject, predicate)?
+            .into_iter()
+            .find(|t| !t.is_link && t.object == value)
+            .ok_or_else(|| {
+                anyhow::anyhow!("literal triple not found: {subject} {predicate} {value}")
+            })?;
+        self.delete_triple(subject, predicate, value)?;
+        let inserted = self.insert_triple(
+            subject,
+            predicate,
+            target,
+            true,
+            literal.source.as_deref(),
+            literal.confidence,
+        )?;
+        if !inserted {
+            self.conn.execute(
+                "UPDATE triples SET is_link = 1 WHERE subject = ?1 AND predicate = ?2 AND object = ?3",
+                params![subject, predicate, target],
+            )?;
+        }
+        tx.commit()?;
+        Ok(())
     }
 
     /// Show predicates used for a given entity type with counts.
@@ -362,6 +451,18 @@ impl Database {
     }
 }
 
+#[cfg(unix)]
+fn restrict_permissions(path: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
+        .with_context(|| format!("failed to set permissions on {}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn restrict_permissions(_path: &Path) -> Result<()> {
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -376,10 +477,14 @@ mod tests {
     fn schema_init() {
         let db = test_db();
         // Verify tables exist
-        let count: i64 = db.conn.query_row(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='triples'",
-            [], |row| row.get(0),
-        ).unwrap();
+        let count: i64 = db
+            .conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='triples'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
         assert_eq!(count, 1);
     }
 
@@ -392,9 +497,18 @@ mod tests {
     #[test]
     fn insert_literal() {
         let db = test_db();
-        let inserted = db.insert_triple("urn:person:tony", "urn:firstname", "Tony", false, None, None).unwrap();
+        let inserted = db
+            .insert_triple(
+                "urn:person:alice",
+                "urn:firstname",
+                "Alice",
+                false,
+                None,
+                None,
+            )
+            .unwrap();
         assert!(inserted);
-        let triples = db.get_triples_by_subject("urn:person:tony").unwrap();
+        let triples = db.get_triples_by_subject("urn:person:alice").unwrap();
         assert_eq!(triples.len(), 1);
         assert!(!triples[0].is_link);
     }
@@ -402,8 +516,16 @@ mod tests {
     #[test]
     fn insert_link() {
         let db = test_db();
-        db.insert_triple("urn:person:tony", "urn:knows", "urn:person:jane", true, None, None).unwrap();
-        let triples = db.get_triples_by_subject("urn:person:tony").unwrap();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:knows",
+            "urn:person:jane",
+            true,
+            None,
+            None,
+        )
+        .unwrap();
+        let triples = db.get_triples_by_subject("urn:person:alice").unwrap();
         assert_eq!(triples.len(), 1);
         assert!(triples[0].is_link);
     }
@@ -411,48 +533,133 @@ mod tests {
     #[test]
     fn unique_constraint() {
         let db = test_db();
-        db.insert_triple("urn:person:tony", "urn:firstname", "Tony", false, None, None).unwrap();
-        let inserted = db.insert_triple("urn:person:tony", "urn:firstname", "Tony", false, None, None).unwrap();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:firstname",
+            "Alice",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        let inserted = db
+            .insert_triple(
+                "urn:person:alice",
+                "urn:firstname",
+                "Alice",
+                false,
+                None,
+                None,
+            )
+            .unwrap();
         assert!(!inserted);
     }
 
     #[test]
     fn get_by_subject() {
         let db = test_db();
-        db.insert_triple("urn:person:tony", "urn:firstname", "Tony", false, None, None).unwrap();
-        db.insert_triple("urn:person:tony", "urn:lastname", "Moulton", false, None, None).unwrap();
-        db.insert_triple("urn:person:tony", "urn:age", "35", false, None, None).unwrap();
-        let triples = db.get_triples_by_subject("urn:person:tony").unwrap();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:firstname",
+            "Alice",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:lastname",
+            "Example",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        db.insert_triple("urn:person:alice", "urn:age", "35", false, None, None)
+            .unwrap();
+        let triples = db.get_triples_by_subject("urn:person:alice").unwrap();
         assert_eq!(triples.len(), 3);
     }
 
     #[test]
     fn get_by_subject_predicate() {
         let db = test_db();
-        db.insert_triple("urn:person:tony", "urn:firstname", "Tony", false, None, None).unwrap();
-        db.insert_triple("urn:person:tony", "urn:lastname", "Moulton", false, None, None).unwrap();
-        let triples = db.get_triples_by_subject_predicate("urn:person:tony", "urn:firstname").unwrap();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:firstname",
+            "Alice",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:lastname",
+            "Example",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        let triples = db
+            .get_triples_by_subject_predicate("urn:person:alice", "urn:firstname")
+            .unwrap();
         assert_eq!(triples.len(), 1);
-        assert_eq!(triples[0].object, "Tony");
+        assert_eq!(triples[0].object, "Alice");
     }
 
     #[test]
     fn delete_entity() {
         let db = test_db();
-        db.insert_triple("urn:person:tony", "urn:firstname", "Tony", false, None, None).unwrap();
-        db.insert_triple("urn:person:tony", "urn:lastname", "Moulton", false, None, None).unwrap();
-        let count = db.delete_entity("urn:person:tony").unwrap();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:firstname",
+            "Alice",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:lastname",
+            "Example",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        let count = db.delete_entity("urn:person:alice").unwrap();
         assert_eq!(count, 2);
-        assert!(!db.entity_exists("urn:person:tony").unwrap());
+        assert!(!db.entity_exists("urn:person:alice").unwrap());
     }
 
     #[test]
     fn delete_predicate() {
         let db = test_db();
-        db.insert_triple("urn:person:tony", "urn:firstname", "Tony", false, None, None).unwrap();
-        db.insert_triple("urn:person:tony", "urn:lastname", "Moulton", false, None, None).unwrap();
-        db.delete_predicate("urn:person:tony", "urn:firstname").unwrap();
-        let triples = db.get_triples_by_subject("urn:person:tony").unwrap();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:firstname",
+            "Alice",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:lastname",
+            "Example",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        db.delete_predicate("urn:person:alice", "urn:firstname")
+            .unwrap();
+        let triples = db.get_triples_by_subject("urn:person:alice").unwrap();
         assert_eq!(triples.len(), 1);
         assert_eq!(triples[0].predicate, "urn:lastname");
     }
@@ -460,10 +667,29 @@ mod tests {
     #[test]
     fn delete_specific_triple() {
         let db = test_db();
-        db.insert_triple("urn:person:tony", "urn:phone", "+1-555-0123", false, None, None).unwrap();
-        db.insert_triple("urn:person:tony", "urn:phone", "15550123", false, None, None).unwrap();
-        db.delete_triple("urn:person:tony", "urn:phone", "+1-555-0123").unwrap();
-        let triples = db.get_triples_by_subject_predicate("urn:person:tony", "urn:phone").unwrap();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:phone",
+            "+1-555-0123",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:phone",
+            "15550123",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        db.delete_triple("urn:person:alice", "urn:phone", "+1-555-0123")
+            .unwrap();
+        let triples = db
+            .get_triples_by_subject_predicate("urn:person:alice", "urn:phone")
+            .unwrap();
         assert_eq!(triples.len(), 1);
         assert_eq!(triples[0].object, "15550123");
     }
@@ -471,26 +697,58 @@ mod tests {
     #[test]
     fn fts_insert_sync() {
         let db = test_db();
-        db.insert_triple("urn:person:tony", "urn:firstname", "Tony", false, None, None).unwrap();
-        let results = db.fts_search("Tony").unwrap();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:firstname",
+            "Alice",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        let results = db.fts_search("Alice").unwrap();
         assert_eq!(results.len(), 1);
     }
 
     #[test]
     fn fts_delete_sync() {
         let db = test_db();
-        db.insert_triple("urn:person:tony", "urn:firstname", "Tony", false, None, None).unwrap();
-        db.delete_entity("urn:person:tony").unwrap();
-        let results = db.fts_search("Tony").unwrap();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:firstname",
+            "Alice",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        db.delete_entity("urn:person:alice").unwrap();
+        let results = db.fts_search("Alice").unwrap();
         assert_eq!(results.len(), 0);
     }
 
     #[test]
     fn get_links_only() {
         let db = test_db();
-        db.insert_triple("urn:person:tony", "urn:firstname", "Tony", false, None, None).unwrap();
-        db.insert_triple("urn:person:tony", "urn:knows", "urn:person:jane", true, None, None).unwrap();
-        let links = db.get_outbound_links("urn:person:tony").unwrap();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:firstname",
+            "Alice",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:knows",
+            "urn:person:jane",
+            true,
+            None,
+            None,
+        )
+        .unwrap();
+        let links = db.get_outbound_links("urn:person:alice").unwrap();
         assert_eq!(links.len(), 1);
         assert_eq!(links[0].object, "urn:person:jane");
     }
@@ -498,8 +756,16 @@ mod tests {
     #[test]
     fn provenance_stored() {
         let db = test_db();
-        db.insert_triple("urn:person:tony", "urn:age", "35", false, Some("public records"), Some(0.9)).unwrap();
-        let triples = db.get_triples_by_subject("urn:person:tony").unwrap();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:age",
+            "35",
+            false,
+            Some("public records"),
+            Some(0.9),
+        )
+        .unwrap();
+        let triples = db.get_triples_by_subject("urn:person:alice").unwrap();
         assert_eq!(triples[0].source.as_deref(), Some("public records"));
         assert_eq!(triples[0].confidence, Some(0.9));
     }
@@ -507,8 +773,24 @@ mod tests {
     #[test]
     fn find_inbound_links() {
         let db = test_db();
-        db.insert_triple("urn:person:tony", "urn:knows", "urn:person:jane", true, None, None).unwrap();
-        db.insert_triple("urn:person:bob", "urn:knows", "urn:person:jane", true, None, None).unwrap();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:knows",
+            "urn:person:jane",
+            true,
+            None,
+            None,
+        )
+        .unwrap();
+        db.insert_triple(
+            "urn:person:bob",
+            "urn:knows",
+            "urn:person:jane",
+            true,
+            None,
+            None,
+        )
+        .unwrap();
         let inbound = db.find_inbound_links("urn:person:jane").unwrap();
         assert_eq!(inbound.len(), 2);
     }
@@ -516,9 +798,12 @@ mod tests {
     #[test]
     fn list_types() {
         let db = test_db();
-        db.insert_triple("urn:person:tony", "urn:name", "Tony", false, None, None).unwrap();
-        db.insert_triple("urn:person:jane", "urn:name", "Jane", false, None, None).unwrap();
-        db.insert_triple("urn:org:acme", "urn:name", "Acme", false, None, None).unwrap();
+        db.insert_triple("urn:person:alice", "urn:name", "Alice", false, None, None)
+            .unwrap();
+        db.insert_triple("urn:person:jane", "urn:name", "Jane", false, None, None)
+            .unwrap();
+        db.insert_triple("urn:org:acme", "urn:name", "Acme", false, None, None)
+            .unwrap();
         let types = db.list_types().unwrap();
         assert_eq!(types.len(), 2);
     }
@@ -526,9 +811,33 @@ mod tests {
     #[test]
     fn schema_for_type() {
         let db = test_db();
-        db.insert_triple("urn:person:tony", "urn:firstname", "Tony", false, None, None).unwrap();
-        db.insert_triple("urn:person:tony", "urn:lastname", "Moulton", false, None, None).unwrap();
-        db.insert_triple("urn:person:jane", "urn:firstname", "Jane", false, None, None).unwrap();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:firstname",
+            "Alice",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:lastname",
+            "Example",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        db.insert_triple(
+            "urn:person:jane",
+            "urn:firstname",
+            "Jane",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
         let schema = db.schema_for_type("person").unwrap();
         assert_eq!(schema.len(), 2);
         // firstname should have count 2
@@ -537,12 +846,280 @@ mod tests {
     }
 
     #[test]
-    fn resolve_default_path() {
+    fn resolve_named_graph_without_creating_dirs() {
+        let path = resolve_db_path(Some("case1"), false).unwrap();
+        assert_eq!(path, Path::new(".kg").join("case1.db"));
+    }
+
+    #[test]
+    fn resolve_explicit_path_is_used_as_is() {
         let dir = tempfile::tempdir().unwrap();
-        let _guard = std::env::set_current_dir(dir.path());
-        // We can't easily test resolve_db_path without changing cwd
-        // so just test the logic paths directly
-        let path = resolve_db_path(None).unwrap();
-        assert!(path.to_str().unwrap().contains("graph.db"));
+        let p = dir.path().join("x.db");
+        let path = resolve_db_path(Some(p.to_str().unwrap()), false).unwrap();
+        assert_eq!(path, p);
+    }
+
+    #[test]
+    fn merge_skips_self_loops() {
+        let db = test_db();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:rel:knows",
+            "urn:person:bob",
+            true,
+            None,
+            None,
+        )
+        .unwrap();
+        db.insert_triple(
+            "urn:person:bob",
+            "urn:rel:knows",
+            "urn:person:alice",
+            true,
+            None,
+            None,
+        )
+        .unwrap();
+        db.merge_entity("urn:person:alice", "urn:person:bob")
+            .unwrap();
+        let links = db.get_outbound_links("urn:person:bob").unwrap();
+        assert!(
+            links.iter().all(|t| t.object != "urn:person:bob"),
+            "self-loop created: {links:?}"
+        );
+        assert!(!db.entity_exists("urn:person:alice").unwrap());
+    }
+
+    #[test]
+    fn merge_preserves_provenance() {
+        let db = test_db();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:prop:age",
+            "35",
+            false,
+            Some("records"),
+            Some(0.7),
+        )
+        .unwrap();
+        db.merge_entity("urn:person:alice", "urn:person:bob")
+            .unwrap();
+        let t = &db
+            .get_triples_by_subject_predicate("urn:person:bob", "urn:prop:age")
+            .unwrap()[0];
+        assert_eq!(t.source.as_deref(), Some("records"));
+        assert_eq!(t.confidence, Some(0.7));
+    }
+
+    #[test]
+    fn promote_keeps_provenance_and_removes_literal() {
+        let db = test_db();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:prop:employer",
+            "Acme",
+            false,
+            Some("linkedin"),
+            Some(0.6),
+        )
+        .unwrap();
+        db.promote_literal(
+            "urn:person:alice",
+            "urn:prop:employer",
+            "Acme",
+            "urn:org:acme",
+        )
+        .unwrap();
+        let ts = db
+            .get_triples_by_subject_predicate("urn:person:alice", "urn:prop:employer")
+            .unwrap();
+        assert_eq!(ts.len(), 1);
+        assert!(ts[0].is_link);
+        assert_eq!(ts[0].object, "urn:org:acme");
+        assert_eq!(ts[0].source.as_deref(), Some("linkedin"));
+        assert_eq!(ts[0].confidence, Some(0.6));
+    }
+
+    #[test]
+    fn promote_missing_literal_is_an_error_and_changes_nothing() {
+        let db = test_db();
+        let err = db.promote_literal(
+            "urn:person:alice",
+            "urn:prop:employer",
+            "Acme",
+            "urn:org:acme",
+        );
+        assert!(err.is_err());
+        assert!(
+            db.get_triples_by_subject("urn:person:alice")
+                .unwrap()
+                .is_empty()
+        );
+    }
+
+    #[test]
+    fn fts_quote_wraps_each_token_and_escapes_quotes() {
+        assert_eq!(fts_quote("foo-bar"), "\"foo-bar\"");
+        assert_eq!(fts_quote("alice example.com"), "\"alice\" \"example.com\"");
+        assert_eq!(fts_quote("say \"hi\""), "\"say\" \"\"\"hi\"\"\"");
+        assert_eq!(fts_quote("   "), "");
+    }
+
+    #[test]
+    fn created_at_is_rfc3339_utc() {
+        let db = test_db();
+        db.insert_triple("urn:person:alice", "urn:prop:age", "35", false, None, None)
+            .unwrap();
+        let t = &db.get_triples_by_subject("urn:person:alice").unwrap()[0];
+        assert!(t.created_at.ends_with('Z'), "got {}", t.created_at);
+        assert_eq!(
+            t.created_at.len(),
+            "2026-09-06T12:00:00.000Z".len(),
+            "got {}",
+            t.created_at
+        );
+    }
+
+    #[test]
+    fn fts_search_tolerates_operator_characters() {
+        let db = test_db();
+        db.insert_triple(
+            "urn:domain:example.com",
+            "urn:prop:registrar",
+            "foo-bar",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(db.fts_search("foo-bar").unwrap().len(), 1);
+        assert!(db.fts_search("unterminated \"quote").unwrap().is_empty());
+        assert!(db.fts_search("").unwrap().is_empty());
+    }
+
+    #[test]
+    fn merge_rewrites_source_self_loop_without_dangling() {
+        let db = test_db();
+        db.insert_triple(
+            "urn:person:src",
+            "urn:rel:self",
+            "urn:person:src",
+            true,
+            None,
+            None,
+        )
+        .unwrap();
+        db.insert_triple(
+            "urn:person:src",
+            "urn:prop:name",
+            "Src Person",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        let moved = db.merge_entity("urn:person:src", "urn:person:tgt").unwrap();
+        let links = db.get_outbound_links("urn:person:tgt").unwrap();
+        assert!(
+            links.iter().all(|t| t.object != "urn:person:src"),
+            "dangling link left pointing at source: {links:?}"
+        );
+        assert_eq!(moved, 1, "only the literal should have been moved");
+    }
+
+    #[test]
+    fn promote_onto_existing_literal_marks_it_as_link() {
+        let db = test_db();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:prop:employer",
+            "Acme",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:prop:employer",
+            "urn:org:acme",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        db.promote_literal(
+            "urn:person:alice",
+            "urn:prop:employer",
+            "Acme",
+            "urn:org:acme",
+        )
+        .unwrap();
+        let ts = db
+            .get_triples_by_subject_predicate("urn:person:alice", "urn:prop:employer")
+            .unwrap();
+        assert_eq!(ts.len(), 1, "expected exactly one triple: {ts:?}");
+        assert!(ts[0].is_link);
+        assert_eq!(ts[0].object, "urn:org:acme");
+    }
+
+    #[test]
+    fn promote_onto_existing_link_keeps_single_link() {
+        let db = test_db();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:prop:employer",
+            "Acme",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:prop:employer",
+            "urn:org:acme",
+            true,
+            None,
+            None,
+        )
+        .unwrap();
+        db.promote_literal(
+            "urn:person:alice",
+            "urn:prop:employer",
+            "Acme",
+            "urn:org:acme",
+        )
+        .unwrap();
+        let ts = db
+            .get_triples_by_subject_predicate("urn:person:alice", "urn:prop:employer")
+            .unwrap();
+        assert_eq!(ts.len(), 1, "expected exactly one triple: {ts:?}");
+        assert!(ts[0].is_link);
+        assert_eq!(ts[0].object, "urn:org:acme");
+    }
+
+    #[test]
+    fn insert_writes_rfc3339_even_when_table_default_is_old() {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(
+            "CREATE TABLE triples (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                subject     TEXT NOT NULL,
+                predicate   TEXT NOT NULL,
+                object      TEXT NOT NULL,
+                is_link     BOOLEAN NOT NULL DEFAULT 0,
+                source      TEXT,
+                confidence  REAL,
+                created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+            );",
+        )
+        .unwrap();
+        let db = Database { conn };
+        db.insert_triple("urn:person:alice", "urn:prop:age", "35", false, None, None)
+            .unwrap();
+        let t = &db.get_triples_by_subject("urn:person:alice").unwrap()[0];
+        assert!(t.created_at.ends_with('Z'), "got {}", t.created_at);
+        assert_eq!(t.created_at.len(), "2026-09-06T12:00:00.000Z".len());
     }
 }

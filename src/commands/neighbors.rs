@@ -1,9 +1,10 @@
 use anyhow::{Result, bail};
 
+use crate::Direction;
 use crate::db::Database;
 use crate::model::Urn;
 
-pub fn run(db: &Database, subject: &str, direction: &str) -> Result<()> {
+pub fn run(db: &Database, subject: &str, direction: Direction) -> Result<()> {
     Urn::parse(subject)?;
 
     if !db.entity_exists(subject)? {
@@ -12,7 +13,7 @@ pub fn run(db: &Database, subject: &str, direction: &str) -> Result<()> {
 
     let mut neighbors = Vec::new();
 
-    if direction == "out" || direction == "both" {
+    if matches!(direction, Direction::Out | Direction::Both) {
         for t in db.get_outbound_links(subject)? {
             neighbors.push(serde_json::json!({
                 "direction": "out",
@@ -22,7 +23,7 @@ pub fn run(db: &Database, subject: &str, direction: &str) -> Result<()> {
         }
     }
 
-    if direction == "in" || direction == "both" {
+    if matches!(direction, Direction::In | Direction::Both) {
         for t in db.find_inbound_links(subject)? {
             neighbors.push(serde_json::json!({
                 "direction": "in",
