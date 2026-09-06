@@ -8,6 +8,22 @@ use clap::{Parser, Subcommand};
 
 use db::{Database, resolve_db_path};
 
+#[derive(Clone, Copy, Debug, clap::ValueEnum)]
+pub enum Direction {
+    In,
+    Out,
+    Both,
+}
+
+fn parse_confidence(s: &str) -> Result<f64, String> {
+    let v: f64 = s.parse().map_err(|_| format!("`{s}` is not a number"))?;
+    if (0.0..=1.0).contains(&v) {
+        Ok(v)
+    } else {
+        Err(format!("confidence must be between 0 and 1, got {v}"))
+    }
+}
+
 #[derive(Parser)]
 #[command(
     name = "kg",
@@ -44,7 +60,7 @@ enum Command {
         props: Vec<String>,
         #[arg(long)]
         source: Option<String>,
-        #[arg(long)]
+        #[arg(long, value_parser = parse_confidence)]
         confidence: Option<f64>,
     },
     /// Set a literal property on an entity
@@ -54,7 +70,7 @@ enum Command {
         value: String,
         #[arg(long)]
         source: Option<String>,
-        #[arg(long)]
+        #[arg(long, value_parser = parse_confidence)]
         confidence: Option<f64>,
     },
     /// Get an entity and its properties
@@ -77,7 +93,7 @@ enum Command {
         target: String,
         #[arg(long)]
         source: Option<String>,
-        #[arg(long)]
+        #[arg(long, value_parser = parse_confidence)]
         confidence: Option<f64>,
     },
     /// Remove a link between two entities
@@ -101,8 +117,8 @@ enum Command {
     Neighbors {
         subject: String,
         /// Direction: in, out, or both
-        #[arg(long, default_value = "both")]
-        direction: String,
+        #[arg(long, value_enum, default_value_t = Direction::Both)]
+        direction: Direction,
     },
     /// Merge source entity into target entity
     Merge { source: String, target: String },
@@ -204,7 +220,7 @@ fn main() -> Result<()> {
         Command::Types => commands::types::run(&db),
         Command::Schema { entity_type } => commands::schema::run(&db, &entity_type),
         Command::Neighbors { subject, direction } => {
-            commands::neighbors::run(&db, &subject, &direction)
+            commands::neighbors::run(&db, &subject, direction)
         }
         Command::Merge { source, target } => commands::merge::run(&db, &source, &target, opts),
         Command::Path {

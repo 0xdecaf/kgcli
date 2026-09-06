@@ -78,6 +78,16 @@ pub fn resolve_db_path(graph: Option<&str>) -> Result<PathBuf> {
     }
 }
 
+/// Quote a free-text query for FTS5 so user input is matched literally
+/// per whitespace-separated token instead of being parsed as FTS syntax.
+pub fn fts_quote(query: &str) -> String {
+    query
+        .split_whitespace()
+        .map(|tok| format!("\"{}\"", tok.replace('"', "\"\"")))
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
 pub struct Database {
     pub conn: Connection,
 }
@@ -216,6 +226,10 @@ impl Database {
 
     /// Full-text search across all triple fields.
     pub fn fts_search(&self, query: &str) -> Result<Vec<Triple>> {
+        let quoted = fts_quote(query);
+        if quoted.is_empty() {
+            return Ok(Vec::new());
+        }
         let mut stmt = self.conn.prepare(
             "SELECT t.id, t.subject, t.predicate, t.object, t.is_link, t.source, t.confidence, t.created_at
              FROM triples_fts f
@@ -223,7 +237,7 @@ impl Database {
              WHERE triples_fts MATCH ?1
              ORDER BY rank",
         )?;
-        let rows = stmt.query_map(params![query], |row| {
+        let rows = stmt.query_map(params![quoted], |row| {
             Ok(Triple {
                 id: row.get(0)?,
                 subject: row.get(1)?,
@@ -879,5 +893,30 @@ mod tests {
                 .unwrap()
                 .is_empty()
         );
+    }
+
+    #[test]
+    fn fts_quote_wraps_each_token_and_escapes_quotes() {
+        assert_eq!(fts_quote("foo-bar"), "\"foo-bar\"");
+        assert_eq!(fts_quote("alice example.com"), "\"alice\" \"example.com\"");
+        assert_eq!(fts_quote("say \"hi\""), "\"say\" \"\"\"hi\"\"\"");
+        assert_eq!(fts_quote("   "), "");
+    }
+
+    #[test]
+    fn fts_search_tolerates_operator_characters() {
+        let db = test_db();
+        db.insert_triple(
+            "urn:domain:example.com",
+            "urn:prop:registrar",
+            "foo-bar",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        assert_eq!(db.fts_search("foo-bar").unwrap().len(), 1);
+        assert!(db.fts_search("unterminated \"quote").unwrap().is_empty());
+        assert!(db.fts_search("").unwrap().is_empty());
     }
 }

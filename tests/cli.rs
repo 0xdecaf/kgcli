@@ -81,3 +81,35 @@ fn provenance_flag_exposes_source_and_confidence() {
         .success()
         .stdout(predicate::str::contains("\"urn:prop:age\": \"35\""));
 }
+
+#[test]
+fn confidence_outside_unit_interval_is_rejected() {
+    let dir = tempfile::tempdir().unwrap();
+    kg(dir.path())
+        .args([
+            "set",
+            "urn:person:alice-example",
+            "urn:prop:age",
+            "35",
+            "--confidence",
+            "7",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("between 0 and 1"));
+}
+
+#[test]
+fn neighbors_rejects_unknown_direction() {
+    let dir = tempfile::tempdir().unwrap();
+    kg(dir.path())
+        .args([
+            "neighbors",
+            "urn:person:alice-example",
+            "--direction",
+            "sideways",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("possible values"));
+}
