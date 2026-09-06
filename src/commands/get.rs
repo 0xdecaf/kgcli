@@ -9,7 +9,7 @@ pub fn run(db: &Database, subject: &str, expand: bool) -> Result<()> {
     Urn::parse(subject)?;
 
     let triples = db.get_triples_by_subject(subject)?;
-    if triples.is_empty() && !db.entity_exists(subject)? {
+    if triples.is_empty() {
         bail!("entity not found: {subject}");
     }
 

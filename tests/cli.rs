@@ -36,3 +36,18 @@ fn help_quick_start_example_actually_runs() {
         .success()
         .stdout(predicate::str::contains("\"urn:prop:name\": \"Alice\""));
 }
+
+#[test]
+fn create_without_properties_is_an_error() {
+    let dir = tempfile::tempdir().unwrap();
+    kg(dir.path())
+        .args(["create", "urn:person:alice-example"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("at least one"));
+    kg(dir.path())
+        .args(["get", "urn:person:alice-example"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("entity not found"));
+}

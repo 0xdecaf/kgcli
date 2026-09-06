@@ -13,18 +13,20 @@ pub fn run(
 ) -> Result<()> {
     let urn = Urn::parse(subject)?;
 
-    // Upsert: apply any predicates regardless of whether entity exists
+    if predicates.is_empty() {
+        bail!(
+            "at least one <predicate-urn>=<value> property is required; \
+             an entity exists only through its triples (use `kg link` to attach a bare target)"
+        );
+    }
+
     for (pred, val) in predicates {
         if val.is_empty() {
             bail!("empty value not allowed for predicate {pred}");
         }
-        Urn::parse(pred)?; // Validate predicate is a URN
+        Urn::parse(pred)?;
         db.insert_triple(&urn.full, pred, val, false, source, confidence)?;
     }
-
-    // If no predicates and entity doesn't exist, we still need to be able to
-    // return it. We don't insert a "marker" triple — an entity with no triples
-    // is valid. But `get` will return an empty entity.
 
     let triples = db.get_triples_by_subject(&urn.full)?;
     let json = entity_to_jsonld(&urn.full, &triples);
