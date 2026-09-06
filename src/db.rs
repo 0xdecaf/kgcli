@@ -397,7 +397,9 @@ impl Database {
     }
 
     /// Replace the literal triple (subject, predicate, value) with a link to
-    /// `target`, keeping the literal's source and confidence. Atomic.
+    /// `target`, keeping the literal's source and confidence. Atomic. If a
+    /// triple with the target object already exists, it is marked as a link
+    /// and its own provenance is kept.
     pub fn promote_literal(
         &self,
         subject: &str,
@@ -414,7 +416,7 @@ impl Database {
                 anyhow::anyhow!("literal triple not found: {subject} {predicate} {value}")
             })?;
         self.delete_triple(subject, predicate, value)?;
-        self.insert_triple(
+        let inserted = self.insert_triple(
             subject,
             predicate,
             target,
@@ -422,6 +424,12 @@ impl Database {
             literal.source.as_deref(),
             literal.confidence,
         )?;
+        if !inserted {
+            self.conn.execute(
+                "UPDATE triples SET is_link = 1 WHERE subject = ?1 AND predicate = ?2 AND object = ?3",
+                params![subject, predicate, target],
+            )?;
+        }
         tx.commit()?;
         Ok(())
     }
@@ -1017,5 +1025,77 @@ mod tests {
             "dangling link left pointing at source: {links:?}"
         );
         assert_eq!(moved, 1, "only the literal should have been moved");
+    }
+
+    #[test]
+    fn promote_onto_existing_literal_marks_it_as_link() {
+        let db = test_db();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:prop:employer",
+            "Acme",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:prop:employer",
+            "urn:org:acme",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        db.promote_literal(
+            "urn:person:alice",
+            "urn:prop:employer",
+            "Acme",
+            "urn:org:acme",
+        )
+        .unwrap();
+        let ts = db
+            .get_triples_by_subject_predicate("urn:person:alice", "urn:prop:employer")
+            .unwrap();
+        assert_eq!(ts.len(), 1, "expected exactly one triple: {ts:?}");
+        assert!(ts[0].is_link);
+        assert_eq!(ts[0].object, "urn:org:acme");
+    }
+
+    #[test]
+    fn promote_onto_existing_link_keeps_single_link() {
+        let db = test_db();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:prop:employer",
+            "Acme",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        db.insert_triple(
+            "urn:person:alice",
+            "urn:prop:employer",
+            "urn:org:acme",
+            true,
+            None,
+            None,
+        )
+        .unwrap();
+        db.promote_literal(
+            "urn:person:alice",
+            "urn:prop:employer",
+            "Acme",
+            "urn:org:acme",
+        )
+        .unwrap();
+        let ts = db
+            .get_triples_by_subject_predicate("urn:person:alice", "urn:prop:employer")
+            .unwrap();
+        assert_eq!(ts.len(), 1, "expected exactly one triple: {ts:?}");
+        assert!(ts[0].is_link);
+        assert_eq!(ts[0].object, "urn:org:acme");
     }
 }
