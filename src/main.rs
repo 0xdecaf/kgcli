@@ -26,6 +26,10 @@ struct Cli {
     #[arg(long, global = true)]
     graph: Option<String>,
 
+    /// Include source, confidence, and created_at on every value
+    #[arg(long, global = true)]
+    provenance: bool,
+
     #[command(subcommand)]
     command: Command,
 }
@@ -123,6 +127,9 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let db_path = resolve_db_path(cli.graph.as_deref())?;
     let db = Database::open(&db_path)?;
+    let opts = jsonld::OutputOpts {
+        provenance: cli.provenance,
+    };
 
     match cli.command {
         Command::Create {
@@ -140,7 +147,14 @@ fn main() -> Result<()> {
                     Ok((k.to_string(), v.to_string()))
                 })
                 .collect::<Result<Vec<_>>>()?;
-            commands::create::run(&db, &subject, &predicates, source.as_deref(), confidence)
+            commands::create::run(
+                &db,
+                &subject,
+                &predicates,
+                source.as_deref(),
+                confidence,
+                opts,
+            )
         }
         Command::Set {
             subject,
@@ -155,13 +169,14 @@ fn main() -> Result<()> {
             &value,
             source.as_deref(),
             confidence,
+            opts,
         ),
-        Command::Get { subject, expand } => commands::get::run(&db, &subject, expand),
+        Command::Get { subject, expand } => commands::get::run(&db, &subject, expand, opts),
         Command::Delete {
             subject,
             predicate,
             value,
-        } => commands::delete::run(&db, &subject, predicate.as_deref(), value.as_deref()),
+        } => commands::delete::run(&db, &subject, predicate.as_deref(), value.as_deref(), opts),
         Command::Link {
             subject,
             predicate,
@@ -175,13 +190,14 @@ fn main() -> Result<()> {
             &target,
             source.as_deref(),
             confidence,
+            opts,
         ),
         Command::Unlink {
             subject,
             predicate,
             target,
-        } => commands::unlink::run(&db, &subject, &predicate, &target),
-        Command::Search { query } => commands::search::run(&db, &query),
+        } => commands::unlink::run(&db, &subject, &predicate, &target, opts),
+        Command::Search { query } => commands::search::run(&db, &query, opts),
         Command::Query { predicate, value } => {
             commands::query::run(&db, &predicate, value.as_deref())
         }
@@ -190,7 +206,7 @@ fn main() -> Result<()> {
         Command::Neighbors { subject, direction } => {
             commands::neighbors::run(&db, &subject, &direction)
         }
-        Command::Merge { source, target } => commands::merge::run(&db, &source, &target),
+        Command::Merge { source, target } => commands::merge::run(&db, &source, &target, opts),
         Command::Path {
             from,
             to,
@@ -201,6 +217,6 @@ fn main() -> Result<()> {
             predicate,
             value,
             target,
-        } => commands::promote::run(&db, &subject, &predicate, &value, &target),
+        } => commands::promote::run(&db, &subject, &predicate, &value, &target, opts),
     }
 }

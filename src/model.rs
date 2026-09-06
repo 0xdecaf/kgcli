@@ -51,8 +51,7 @@ impl std::fmt::Display for Urn {
 /// A triple stored in the database.
 #[derive(Debug, Clone)]
 pub struct Triple {
-    /// Row id. Read by provenance output (see jsonld.rs).
-    #[allow(dead_code)] // removed in Task 3 when provenance output lands
+    #[allow(dead_code)] // kept for future delete-by-id; not exposed yet
     pub id: i64,
     pub subject: String,
     pub predicate: String,
@@ -60,8 +59,7 @@ pub struct Triple {
     pub is_link: bool,
     pub source: Option<String>,
     pub confidence: Option<f64>,
-    /// Row id. Read by provenance output (see jsonld.rs).
-    #[allow(dead_code)] // removed in Task 3 when provenance output lands
+    /// UTC creation timestamp.
     pub created_at: String,
 }
 

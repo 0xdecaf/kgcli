@@ -1,10 +1,10 @@
 use anyhow::{Result, bail};
 
 use crate::db::Database;
-use crate::jsonld::entity_to_jsonld;
+use crate::jsonld::{OutputOpts, entity_to_jsonld};
 use crate::model::Urn;
 
-pub fn run(db: &Database, source: &str, target: &str) -> Result<()> {
+pub fn run(db: &Database, source: &str, target: &str, opts: OutputOpts) -> Result<()> {
     Urn::parse(source)?;
     Urn::parse(target)?;
 
@@ -21,7 +21,7 @@ pub fn run(db: &Database, source: &str, target: &str) -> Result<()> {
     eprintln!("merged {count} triple(s) from {source} → {target}");
 
     let triples = db.get_triples_by_subject(target)?;
-    let json = entity_to_jsonld(target, &triples);
+    let json = entity_to_jsonld(target, &triples, opts);
     println!("{}", serde_json::to_string_pretty(&json)?);
     Ok(())
 }

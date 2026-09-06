@@ -1,13 +1,20 @@
 use anyhow::{Result, bail};
 
 use crate::db::Database;
-use crate::jsonld::predicate_to_jsonld;
+use crate::jsonld::{OutputOpts, predicate_to_jsonld};
 use crate::model::Urn;
 
 /// Promote a literal value to a link.
 /// Deletes the literal triple (subject, predicate, value) and inserts a link triple
 /// (subject, predicate, target_urn) with is_link=true.
-pub fn run(db: &Database, subject: &str, predicate: &str, value: &str, target: &str) -> Result<()> {
+pub fn run(
+    db: &Database,
+    subject: &str,
+    predicate: &str,
+    value: &str,
+    target: &str,
+    opts: OutputOpts,
+) -> Result<()> {
     Urn::parse(subject)?;
     Urn::parse(predicate)?;
     Urn::parse(target)?;
@@ -24,7 +31,7 @@ pub fn run(db: &Database, subject: &str, predicate: &str, value: &str, target: &
     db.insert_triple(subject, predicate, target, true, None, None)?;
 
     let remaining = db.get_triples_by_subject_predicate(subject, predicate)?;
-    let json = predicate_to_jsonld(subject, predicate, &remaining);
+    let json = predicate_to_jsonld(subject, predicate, &remaining, opts);
     println!("{}", serde_json::to_string_pretty(&json)?);
     Ok(())
 }

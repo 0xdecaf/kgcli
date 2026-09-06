@@ -51,3 +51,33 @@ fn create_without_properties_is_an_error() {
         .failure()
         .stderr(predicate::str::contains("entity not found"));
 }
+
+#[test]
+fn provenance_flag_exposes_source_and_confidence() {
+    let dir = tempfile::tempdir().unwrap();
+    kg(dir.path())
+        .args([
+            "set",
+            "urn:person:alice-example",
+            "urn:prop:age",
+            "35",
+            "--source",
+            "public-records",
+            "--confidence",
+            "0.9",
+        ])
+        .assert()
+        .success();
+    kg(dir.path())
+        .args(["get", "urn:person:alice-example", "--provenance"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"source\": \"public-records\""))
+        .stdout(predicate::str::contains("\"confidence\": 0.9"))
+        .stdout(predicate::str::contains("\"created_at\""));
+    kg(dir.path())
+        .args(["get", "urn:person:alice-example"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"urn:prop:age\": \"35\""));
+}
