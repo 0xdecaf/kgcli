@@ -36,6 +36,8 @@ kg path urn:person:alice-example urn:domain:example.com
 kg search acme
 ```
 
+Output trimmed; the full response is valid JSON.
+
 ```json
 {
   "@context": {
@@ -74,9 +76,11 @@ kg search acme
 - **Literals** are plain strings. **Links** point at another entity URN and are
   created with `kg link` or by promoting a literal with `kg promote`.
 - **Provenance**: every triple carries `--source`, `--confidence` (0 to 1),
-  and a UTC `created_at`. Show them with `--provenance` on any command.
-  Databases created before this version keep their older timestamp format
-  for existing rows.
+  and a UTC `created_at`. Show them with `--provenance` on the
+  entity-rendering commands: create, get, set, link, unlink, delete, merge,
+  promote, search. Rows written by older versions keep their original
+  space-separated timestamp; every row written by this version uses the
+  RFC 3339 form.
 - **Existence** is defined by triples: an entity exists once something is
   asserted about it. `kg create` therefore requires at least one property.
 - **Dangling links** are allowed. `kg link` may point at an entity that has no
@@ -93,14 +97,14 @@ kg search acme
 | `get <urn> [--expand]` | Show an entity, optionally with linked entities inlined |
 | `promote <urn> <pred> <val> <target>` | Turn a literal into a link, keeping provenance |
 | `merge <source> <target>` | Fold one entity into another (atomic, no self-loops) |
-| `neighbors <urn> [--direction in|out|both]` | Adjacent entities |
+| `neighbors <urn> [--direction in\|out\|both]` | Adjacent entities |
 | `path <from> <to> [--max-depth N]` | Shortest link path |
 | `search <text>` | Full-text search over all triples (literal, per-token) |
 | `query <pred> [<val>]` | Entities having a predicate (and value) |
 | `types`, `schema <type>` | What is in the graph |
 
 Global flags: `--graph <name|path>` (default `.kg/graph.db` in the current
-directory), `--provenance`.
+directory), `--provenance` (entity-rendering commands only, see above).
 
 ## Output
 
