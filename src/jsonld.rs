@@ -233,64 +233,74 @@ mod tests {
 
     #[test]
     fn single_literal() {
-        let triples = vec![make_triple("urn:person:tony", "urn:firstname", "Tony", false)];
-        let json = entity_to_jsonld("urn:person:tony", &triples);
-        assert_eq!(json["@id"], "urn:person:tony");
+        let triples = vec![make_triple(
+            "urn:person:alice",
+            "urn:firstname",
+            "Alice",
+            false,
+        )];
+        let json = entity_to_jsonld("urn:person:alice", &triples);
+        assert_eq!(json["@id"], "urn:person:alice");
         assert_eq!(json["@type"], "person");
-        assert_eq!(json["urn:firstname"], "Tony");
+        assert_eq!(json["urn:firstname"], "Alice");
     }
 
     #[test]
     fn multi_valued_literal() {
         let triples = vec![
-            make_triple("urn:person:tony", "urn:phone", "+1-555-0123", false),
-            make_triple("urn:person:tony", "urn:phone", "15550123", false),
+            make_triple("urn:person:alice", "urn:phone", "+1-555-0123", false),
+            make_triple("urn:person:alice", "urn:phone", "15550123", false),
         ];
-        let json = entity_to_jsonld("urn:person:tony", &triples);
+        let json = entity_to_jsonld("urn:person:alice", &triples);
         let phones = json["urn:phone"].as_array().unwrap();
         assert_eq!(phones.len(), 2);
     }
 
     #[test]
     fn single_link() {
-        let triples = vec![make_triple("urn:person:tony", "urn:knows", "urn:person:jane", true)];
-        let json = entity_to_jsonld("urn:person:tony", &triples);
+        let triples = vec![make_triple(
+            "urn:person:alice",
+            "urn:knows",
+            "urn:person:jane",
+            true,
+        )];
+        let json = entity_to_jsonld("urn:person:alice", &triples);
         assert_eq!(json["urn:knows"]["@id"], "urn:person:jane");
     }
 
     #[test]
     fn mixed_literals_and_links() {
         let triples = vec![
-            make_triple("urn:person:tony", "urn:firstname", "Tony", false),
-            make_triple("urn:person:tony", "urn:knows", "urn:person:jane", true),
+            make_triple("urn:person:alice", "urn:firstname", "Alice", false),
+            make_triple("urn:person:alice", "urn:knows", "urn:person:jane", true),
         ];
-        let json = entity_to_jsonld("urn:person:tony", &triples);
-        assert_eq!(json["urn:firstname"], "Tony");
+        let json = entity_to_jsonld("urn:person:alice", &triples);
+        assert_eq!(json["urn:firstname"], "Alice");
         assert_eq!(json["urn:knows"]["@id"], "urn:person:jane");
     }
 
     #[test]
     fn mutation_return() {
         let triples = vec![
-            make_triple("urn:person:tony", "urn:phone", "+1-555-0123", false),
-            make_triple("urn:person:tony", "urn:phone", "15550123", false),
+            make_triple("urn:person:alice", "urn:phone", "+1-555-0123", false),
+            make_triple("urn:person:alice", "urn:phone", "15550123", false),
         ];
-        let json = predicate_to_jsonld("urn:person:tony", "urn:phone", &triples);
-        assert_eq!(json["@id"], "urn:person:tony");
+        let json = predicate_to_jsonld("urn:person:alice", "urn:phone", &triples);
+        assert_eq!(json["@id"], "urn:person:alice");
         let phones = json["urn:phone"].as_array().unwrap();
         assert_eq!(phones.len(), 2);
     }
 
     #[test]
     fn empty_entity() {
-        let json = entity_to_jsonld("urn:person:tony", &[]);
-        assert_eq!(json["@id"], "urn:person:tony");
+        let json = entity_to_jsonld("urn:person:alice", &[]);
+        assert_eq!(json["@id"], "urn:person:alice");
         assert_eq!(json["@type"], "person");
     }
 
     #[test]
     fn context_present() {
-        let json = entity_to_jsonld("urn:person:tony", &[]);
+        let json = entity_to_jsonld("urn:person:alice", &[]);
         assert!(json.get("@context").is_some());
     }
 }

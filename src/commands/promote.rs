@@ -7,13 +7,7 @@ use crate::model::Urn;
 /// Promote a literal value to a link.
 /// Deletes the literal triple (subject, predicate, value) and inserts a link triple
 /// (subject, predicate, target_urn) with is_link=true.
-pub fn run(
-    db: &Database,
-    subject: &str,
-    predicate: &str,
-    value: &str,
-    target: &str,
-) -> Result<()> {
+pub fn run(db: &Database, subject: &str, predicate: &str, value: &str, target: &str) -> Result<()> {
     Urn::parse(subject)?;
     Urn::parse(predicate)?;
     Urn::parse(target)?;

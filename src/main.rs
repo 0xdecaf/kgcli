@@ -9,7 +9,18 @@ use clap::{Parser, Subcommand};
 use db::{Database, resolve_db_path};
 
 #[derive(Parser)]
-#[command(name = "kg", about = "Graph database CLI for OSINT investigations")]
+#[command(
+    name = "kg",
+    version,
+    about = "Graph database CLI for OSINT investigations",
+    long_about = "kg stores an investigation as subject-predicate-object triples in a local \
+SQLite file. Subjects, predicates, and link targets are URNs of the form \
+urn:<type>:<id> (predicates too, e.g. urn:prop:name). Literal values are plain strings.\n\n\
+Quick start:\n  \
+kg create urn:person:alice-example urn:prop:name=Alice --source osint --confidence 0.8\n  \
+kg link urn:person:alice-example urn:rel:works-at urn:org:acme-example\n  \
+kg get urn:person:alice-example --expand"
+)]
 struct Cli {
     /// Named graph or path to database file
     #[arg(long, global = true)]
@@ -23,10 +34,9 @@ struct Cli {
 enum Command {
     /// Create an entity with optional key=value properties
     Create {
-        /// Entity URN (e.g. urn:person:tony-moulton)
+        /// Entity URN (e.g. urn:person:alice-example)
         subject: String,
-        /// Properties as key=value pairs (e.g. urn:name=Tony)
-        #[arg(trailing_var_arg = true)]
+        /// Properties as <predicate-urn>=<value> pairs (e.g. urn:prop:name=Alice)
         props: Vec<String>,
         #[arg(long)]
         source: Option<String>,
@@ -73,9 +83,7 @@ enum Command {
         target: String,
     },
     /// Full-text search across all entities
-    Search {
-        query: String,
-    },
+    Search { query: String },
     /// Find entities by predicate and optional value
     Query {
         predicate: String,
@@ -84,9 +92,7 @@ enum Command {
     /// List all entity types with counts
     Types,
     /// Show predicates used for a given entity type
-    Schema {
-        entity_type: String,
-    },
+    Schema { entity_type: String },
     /// Show inbound and/or outbound links for an entity
     Neighbors {
         subject: String,
@@ -95,10 +101,7 @@ enum Command {
         direction: String,
     },
     /// Merge source entity into target entity
-    Merge {
-        source: String,
-        target: String,
-    },
+    Merge { source: String, target: String },
     /// Find shortest path between two entities
     Path {
         from: String,
@@ -131,9 +134,9 @@ fn main() -> Result<()> {
             let predicates: Vec<(String, String)> = props
                 .iter()
                 .map(|p| {
-                    let (k, v) = p
-                        .split_once('=')
-                        .ok_or_else(|| anyhow::anyhow!("invalid property (expected key=value): {p}"))?;
+                    let (k, v) = p.split_once('=').ok_or_else(|| {
+                        anyhow::anyhow!("invalid property (expected key=value): {p}")
+                    })?;
                     Ok((k.to_string(), v.to_string()))
                 })
                 .collect::<Result<Vec<_>>>()?;
@@ -145,7 +148,14 @@ fn main() -> Result<()> {
             value,
             source,
             confidence,
-        } => commands::set::run(&db, &subject, &predicate, &value, source.as_deref(), confidence),
+        } => commands::set::run(
+            &db,
+            &subject,
+            &predicate,
+            &value,
+            source.as_deref(),
+            confidence,
+        ),
         Command::Get { subject, expand } => commands::get::run(&db, &subject, expand),
         Command::Delete {
             subject,
@@ -158,7 +168,14 @@ fn main() -> Result<()> {
             target,
             source,
             confidence,
-        } => commands::link::run(&db, &subject, &predicate, &target, source.as_deref(), confidence),
+        } => commands::link::run(
+            &db,
+            &subject,
+            &predicate,
+            &target,
+            source.as_deref(),
+            confidence,
+        ),
         Command::Unlink {
             subject,
             predicate,

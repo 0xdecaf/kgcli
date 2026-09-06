@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 
 /// A parsed URN with type and id segments.
 /// Format: `urn:<type>:<id>` where id may contain additional colons.
@@ -51,6 +51,8 @@ impl std::fmt::Display for Urn {
 /// A triple stored in the database.
 #[derive(Debug, Clone)]
 pub struct Triple {
+    /// Row id. Read by provenance output (see jsonld.rs).
+    #[allow(dead_code)] // removed in Task 3 when provenance output lands
     pub id: i64,
     pub subject: String,
     pub predicate: String,
@@ -58,6 +60,8 @@ pub struct Triple {
     pub is_link: bool,
     pub source: Option<String>,
     pub confidence: Option<f64>,
+    /// Row id. Read by provenance output (see jsonld.rs).
+    #[allow(dead_code)] // removed in Task 3 when provenance output lands
     pub created_at: String,
 }
 
@@ -67,10 +71,10 @@ mod tests {
 
     #[test]
     fn valid_urn() {
-        let u = Urn::parse("urn:person:tony-moulton").unwrap();
+        let u = Urn::parse("urn:person:alice-example").unwrap();
         assert_eq!(u.entity_type, "person");
-        assert_eq!(u.id, "tony-moulton");
-        assert_eq!(u.full, "urn:person:tony-moulton");
+        assert_eq!(u.id, "alice-example");
+        assert_eq!(u.full, "urn:person:alice-example");
     }
 
     #[test]
@@ -89,12 +93,12 @@ mod tests {
 
     #[test]
     fn missing_prefix() {
-        assert!(Urn::parse("person:tony").is_err());
+        assert!(Urn::parse("person:alice").is_err());
     }
 
     #[test]
     fn empty_type() {
-        assert!(Urn::parse("urn::tony").is_err());
+        assert!(Urn::parse("urn::alice").is_err());
     }
 
     #[test]
@@ -121,19 +125,19 @@ mod tests {
 
     #[test]
     fn whitespace_in_id() {
-        assert!(Urn::parse("urn:person:tony moulton").is_err());
+        assert!(Urn::parse("urn:person:alice example").is_err());
     }
 
     #[test]
     fn case_preserved() {
-        let u = Urn::parse("urn:Person:Tony").unwrap();
+        let u = Urn::parse("urn:Person:Alice").unwrap();
         assert_eq!(u.entity_type, "Person");
-        assert_eq!(u.id, "Tony");
+        assert_eq!(u.id, "Alice");
     }
 
     #[test]
     fn type_extraction_person() {
-        let u = Urn::parse("urn:person:tony-moulton").unwrap();
+        let u = Urn::parse("urn:person:alice-example").unwrap();
         assert_eq!(u.entity_type, "person");
     }
 
