@@ -351,13 +351,18 @@ impl Database {
         let mut moved = 0;
 
         for t in &outbound {
-            if t.is_link && t.object == target {
-                continue; // source -> target becomes target -> target
+            let object: &str = if t.is_link && t.object == source {
+                target
+            } else {
+                &t.object
+            };
+            if t.is_link && object == target {
+                continue; // would become target -> target
             }
             if self.insert_triple(
                 target,
                 &t.predicate,
-                &t.object,
+                object,
                 t.is_link,
                 t.source.as_deref(),
                 t.confidence,
@@ -368,6 +373,9 @@ impl Database {
         for t in &inbound {
             if t.subject == target {
                 continue; // target -> source becomes target -> target
+            }
+            if t.subject == source {
+                continue; // source's self-loop was already handled in the outbound pass
             }
             if self.insert_triple(
                 &t.subject,
@@ -979,5 +987,35 @@ mod tests {
         assert_eq!(db.fts_search("foo-bar").unwrap().len(), 1);
         assert!(db.fts_search("unterminated \"quote").unwrap().is_empty());
         assert!(db.fts_search("").unwrap().is_empty());
+    }
+
+    #[test]
+    fn merge_rewrites_source_self_loop_without_dangling() {
+        let db = test_db();
+        db.insert_triple(
+            "urn:person:src",
+            "urn:rel:self",
+            "urn:person:src",
+            true,
+            None,
+            None,
+        )
+        .unwrap();
+        db.insert_triple(
+            "urn:person:src",
+            "urn:prop:name",
+            "Src Person",
+            false,
+            None,
+            None,
+        )
+        .unwrap();
+        let moved = db.merge_entity("urn:person:src", "urn:person:tgt").unwrap();
+        let links = db.get_outbound_links("urn:person:tgt").unwrap();
+        assert!(
+            links.iter().all(|t| t.object != "urn:person:src"),
+            "dangling link left pointing at source: {links:?}"
+        );
+        assert_eq!(moved, 1, "only the literal should have been moved");
     }
 }
