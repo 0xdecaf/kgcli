@@ -42,7 +42,7 @@ struct Cli {
     #[arg(long, global = true)]
     graph: Option<String>,
 
-    /// Include source, confidence, and created_at on every value
+    /// Include source, confidence, and created_at on every value (create, get, set, link, unlink, delete, merge, promote, search)
     #[arg(long, global = true)]
     provenance: bool,
 
@@ -52,14 +52,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
-    /// Create an entity with optional key=value properties
+    /// Create an entity with one or more <predicate-urn>=<value> properties
     Create {
         /// Entity URN (e.g. urn:person:alice-example)
         subject: String,
         /// Properties as <predicate-urn>=<value> pairs (e.g. urn:prop:name=Alice)
+        #[arg(required = true)]
         props: Vec<String>,
+        /// Where this fact came from (free text, e.g. "whois", "interview")
         #[arg(long)]
         source: Option<String>,
+        /// How much you trust it, 0 to 1
         #[arg(long, value_parser = parse_confidence)]
         confidence: Option<f64>,
     },
@@ -68,8 +71,10 @@ enum Command {
         subject: String,
         predicate: String,
         value: String,
+        /// Where this fact came from (free text, e.g. "whois", "interview")
         #[arg(long)]
         source: Option<String>,
+        /// How much you trust it, 0 to 1
         #[arg(long, value_parser = parse_confidence)]
         confidence: Option<f64>,
     },
@@ -91,8 +96,10 @@ enum Command {
         subject: String,
         predicate: String,
         target: String,
+        /// Where this fact came from (free text, e.g. "whois", "interview")
         #[arg(long)]
         source: Option<String>,
+        /// How much you trust it, 0 to 1
         #[arg(long, value_parser = parse_confidence)]
         confidence: Option<f64>,
     },

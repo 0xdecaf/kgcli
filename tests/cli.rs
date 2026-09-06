@@ -44,12 +44,12 @@ fn create_without_properties_is_an_error() {
         .args(["create", "urn:person:alice-example"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("at least one"));
+        .stderr(predicate::str::contains("required").or(predicate::str::contains("at least one")));
     kg(dir.path())
         .args(["get", "urn:person:alice-example"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("entity not found"));
+        .stderr(predicate::str::contains("no graph database found"));
 }
 
 #[test]
