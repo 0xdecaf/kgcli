@@ -144,3 +144,40 @@ fn new_database_is_private_to_the_user() {
         & 0o777;
     assert_eq!(mode, 0o600, "mode was {mode:o}");
 }
+
+#[test]
+fn expand_with_provenance_handles_cycles() {
+    let dir = tempfile::tempdir().unwrap();
+    kg(dir.path())
+        .args([
+            "link",
+            "urn:person:alice-example",
+            "urn:rel:knows",
+            "urn:person:bob-example",
+            "--source",
+            "test",
+        ])
+        .assert()
+        .success();
+    kg(dir.path())
+        .args([
+            "link",
+            "urn:person:bob-example",
+            "urn:rel:knows",
+            "urn:person:alice-example",
+            "--source",
+            "test",
+        ])
+        .assert()
+        .success();
+    kg(dir.path())
+        .args([
+            "get",
+            "urn:person:alice-example",
+            "--expand",
+            "--provenance",
+        ])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"source\": \"test\""));
+}
